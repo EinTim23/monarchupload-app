@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"embed"
+	_ "embed"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -33,66 +32,99 @@ var watermark []byte
 
 //go:embed logo.png
 var logo []byte
-var dummy embed.FS
 
 type UploadResponse struct {
 	Data struct {
 		URL string `json:"url"`
-	} `json:"data"`
+	} `json:"data,omitempty"`
 	Message string `json:"message"`
 	Status  string `json:"status"`
 }
 
+func isFileInUse(filename string) bool {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_EXCL, 0666)
+	if err != nil {
+		return true
+	}
+	file.Close()
+	return false
+}
 func uploadFile(path string, uploadSecret string) {
 	/*
 		TODO:
-			- add support for file chunking to support files over 100mb
 			- add support for private files
 			- clean up code
 			- make my own toast library because all cross platform toast libraries arent great
 	*/
-	client := &http.Client{}
-	body := new(bytes.Buffer)
-
-	mwriter := multipart.NewWriter(body)
-	secret, _ := mwriter.CreateFormField("secret")
-	secret.Write([]byte(uploadSecret))
-	file, _ := mwriter.CreateFormFile("file", filepath.Base(path))
 	fileHandle, err := os.Open(path)
 	if err != nil {
 		return
 	}
 	defer fileHandle.Close()
-	io.Copy(file, fileHandle)
-	mwriter.Close()
 
-	req, err := http.NewRequest(http.MethodPost, "https://api.monarchupload.cc/v3/upload", body)
-	if err != nil {
-		return
-	}
-	req.Header.Add("Content-Type", mwriter.FormDataContentType())
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	var bodyData []byte
-	bodyData, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
-	var response UploadResponse
-	err = json.Unmarshal(bodyData, &response)
-	if err != nil {
-		return
-	}
-	resourcesPath := filepath.Join(filepath.Dir(path), "../Resources")
-	beeep.Alert("MonarchUpload", response.Message, resourcesPath+"/logo.png")
-	if response.Status == "success" {
-		clipboard.Write(clipboard.FmtText, []byte(response.Data.URL))
+	lastChunk := false
+	var chunkSize int64 = 5000000 //50 mb
+	var chunk int64 = 0
+	client := &http.Client{}
+
+	for {
+		body := new(bytes.Buffer)
+
+		mwriter := multipart.NewWriter(body)
+		secret, _ := mwriter.CreateFormField("secret")
+		secret.Write([]byte(uploadSecret))
+
+		chunked, _ := mwriter.CreateFormField("chunked")
+		chunked.Write([]byte("true"))
+
+		private, _ := mwriter.CreateFormField("private")
+		private.Write([]byte("false"))
+
+		file, _ := mwriter.CreateFormFile("file", filepath.Base(path))
+		reader := io.NewSectionReader(fileHandle, chunk*chunkSize, chunkSize)
+		written, _ := io.Copy(file, reader)
+		if written != chunkSize {
+			lastChunk = true
+		}
+		lastchunk, _ := mwriter.CreateFormField("lastchunk")
+		if lastChunk {
+			lastchunk.Write([]byte("true"))
+		} else {
+			lastchunk.Write([]byte("false"))
+		}
+
+		mwriter.Close()
+
+		req, err := http.NewRequest(http.MethodPost, "https://api.monarchupload.cc/v3/upload", body)
+		if err != nil {
+			return
+		}
+		req.Header.Add("Content-Type", mwriter.FormDataContentType())
+		resp, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		var bodyData []byte
+		bodyData, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return
+		}
+		var response UploadResponse
+		err = json.Unmarshal(bodyData, &response)
+		if err != nil {
+			return
+		}
+		if response.Status != "success" || lastChunk {
+			beeep.Alert("MonarchUpload", response.Message, "")
+			if response.Data.URL != "" {
+				clipboard.Write(clipboard.FmtText, []byte(response.Data.URL))
+			}
+			return
+		}
+		chunk++
 	}
 }
 func main() {
-	fs.ReadFile(dummy, "") //i need this dummy so the go static check doesnt automatically remove the embed module from my imports(thanks vscode)
 	path, _ := os.Executable()
 	autostartApp := &autostart.App{
 		Name:        "MonarchUpload",
@@ -126,7 +158,12 @@ func main() {
 				}
 				if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) && lastImage != event.Name {
 					lastImage = event.Name
-					time.Sleep(time.Second)
+					for {
+						if !isFileInUse(event.Name) {
+							break
+						}
+						time.Sleep(100 * time.Millisecond)
+					}
 					uploadFile(event.Name, a.Preferences().String("uploadsecret"))
 				}
 			case _, ok := <-watcher.Errors:
@@ -152,7 +189,10 @@ func main() {
 	})
 	launchOnBootToggle.Checked = a.Preferences().Bool("autostart")
 	selectFolderButton := widget.NewButton("Select folder 📂", func() {
-		path, _ := zenity.SelectFile(zenity.Directory())
+		path, err := zenity.SelectFile(zenity.Directory())
+		if err != nil {
+			return
+		}
 		a.Preferences().SetString("path", path)
 		for i := 0; i < len(watcher.WatchList()); i++ {
 			watcher.Remove(watcher.WatchList()[i])
@@ -170,6 +210,27 @@ func main() {
 
 	if desk, ok := a.(desktop.App); ok {
 		m := fyne.NewMenu("MonarchUpload",
+			fyne.NewMenuItem("Upload file", func() {
+				path, err := zenity.SelectFile()
+				if err != nil {
+					return
+				}
+				uploadFile(path, a.Preferences().String("uploadsecret"))
+			}),
+			fyne.NewMenuItem("Upload folder", func() {
+				path, err := zenity.SelectFile(zenity.Directory())
+				if err != nil {
+					return
+				}
+				filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+					if info.IsDir() {
+						return nil
+					}
+					uploadFile(filePath, a.Preferences().String("uploadsecret"))
+					return nil
+				})
+
+			}),
 			fyne.NewMenuItem("Settings", func() {
 				hideFromDock(false)
 				w.Show()
