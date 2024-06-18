@@ -26,12 +26,34 @@ import (
 	"golang.design/x/clipboard"
 )
 
+/*
+#cgo CFLAGS: -x objective-c
+#cgo LDFLAGS: -framework Cocoa
+#import <Cocoa/Cocoa.h>
+	void HideDockIcon(int shouldHide) {
+		if (shouldHide)
+	    	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+		else
+			[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+	    return;
+	}
+*/
+import "C"
+
 //go:embed watermark.png
 var watermark []byte
 
 //go:embed logo.png
 var logo []byte
 var dummy embed.FS
+
+func hideFromDock(shouldHide bool) {
+	if shouldHide {
+		C.HideDockIcon(1)
+	} else {
+		C.HideDockIcon(0)
+	}
+}
 
 type UploadResponse struct {
 	Data struct {
@@ -82,7 +104,8 @@ func uploadFile(path string, uploadSecret string) {
 	if err != nil {
 		return
 	}
-	beeep.Alert("MonarchUpload", response.Message, "")
+	resourcesPath := filepath.Join(filepath.Dir(path), "../Resources")
+	beeep.Alert("MonarchUpload", response.Message, resourcesPath+"/logo.png")
 	if response.Status == "success" {
 		clipboard.Write(clipboard.FmtText, []byte(response.Data.URL))
 	}
@@ -119,7 +142,7 @@ func main() {
 				if !ok {
 					return
 				}
-				if event.Has(fsnotify.Write) {
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
 					uploadFile(event.Name, a.Preferences().String("uploadsecret"))
 				}
 			case _, ok := <-watcher.Errors:
@@ -164,17 +187,20 @@ func main() {
 	if desk, ok := a.(desktop.App); ok {
 		m := fyne.NewMenu("MonarchUpload",
 			fyne.NewMenuItem("Settings", func() {
+				hideFromDock(false)
 				w.Show()
 			}))
 		desk.SetSystemTrayMenu(m)
 	}
 	w.SetCloseIntercept(func() {
 		w.Hide()
+		hideFromDock(true)
 	})
 	if installed {
 		go func() {
 			time.Sleep(time.Second)
 			w.Hide()
+			hideFromDock(true)
 		}()
 	}
 

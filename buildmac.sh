@@ -55,7 +55,7 @@ EOL
 if [ -f "$ICON_PATH" ]; then
     cp "$ICON_PATH" $APP_NAME.app/Contents/Resources/
 fi
-cp -rf ./Resources/* $APP_NAME.app/Contents/Resources/
+cp -rf logo.png $APP_NAME.app/Contents/Resources/
 # Set executable permissions
 chmod +x $APP_NAME.app/Contents/MacOS/$EXECUTABLE_NAME
 
