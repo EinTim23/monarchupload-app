@@ -26,18 +26,6 @@ import (
 	"golang.design/x/clipboard"
 )
 
-/*
-#cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa
-#import <Cocoa/Cocoa.h>
-	void HideDockIcon(int shouldHide) {
-		if (shouldHide)
-	    	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-		else
-			[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-	    return;
-	}
-*/
 import "C"
 
 //go:embed watermark.png
@@ -46,14 +34,6 @@ var watermark []byte
 //go:embed logo.png
 var logo []byte
 var dummy embed.FS
-
-func hideFromDock(shouldHide bool) {
-	if shouldHide {
-		C.HideDockIcon(1)
-	} else {
-		C.HideDockIcon(0)
-	}
-}
 
 type UploadResponse struct {
 	Data struct {
