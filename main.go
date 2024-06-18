@@ -117,13 +117,16 @@ func main() {
 
 	a.SetIcon(fyne.NewStaticResource("icon", logo))
 	go func() {
+		lastImage := ""
 		for {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
 					return
 				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) && lastImage != event.Name {
+					lastImage = event.Name
+					time.Sleep(time.Second)
 					uploadFile(event.Name, a.Preferences().String("uploadsecret"))
 				}
 			case _, ok := <-watcher.Errors:
