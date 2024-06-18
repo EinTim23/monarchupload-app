@@ -49,6 +49,7 @@ func uploadFile(path string, uploadSecret string) {
 			- add support for file chunking to support files over 100mb
 			- add support for private files
 			- clean up code
+			- make my own toast library because all cross platform toast libraries arent great
 	*/
 	client := &http.Client{}
 	body := new(bytes.Buffer)
